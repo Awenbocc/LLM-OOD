@@ -1,0 +1,73 @@
+{
+    "sst2":{
+        "instruct": "This is sentiment analysis task.\n\n### Input:\n{sentence}\n\n### Output:\n", 
+        "normal": "### Input:\n{sentence}\n\n### Output:\n",
+        "none": "{sentence}",
+        "instruct_response_split": "### Output:\n", 
+        "normal_response_split": "### Output:\n"
+    },
+    "mnli":{
+        "instruct": "Below is a natural language inference task. Given a premise and a hypothesis, output the relationship between these two sentences.\n\n### Premise:\n{premise}\n\n### Hypothesis:\n{hypothesis}\n\n### Relationship:\n", 
+        "normal": "### Input:\n{premise} {hypothesis}\n\n### Output:\n",
+        "none": "{premise} {hypothesis}",
+        "instruct_response_split": "### Relationship:\n", 
+        "normal_response_split": "### Output:\n"
+    },
+    "rte":{
+        "instruct": "Below is a natural language inference task. Given a premise and a hypothesis, output the relationship between these two sentences.\n\n### Premise:\n{premise}\n\n### Hypothesis:\n{hypothesis}\n\n### Relationship:\n", 
+        "normal": "### Input:\n{premise} {hypothesis}\n\n### Output:\n",
+        "none": "{premise} {hypothesis}",
+        "instruct_response_split": "### Relationship:\n", 
+        "normal_response_split": "### Output:\n"
+    },
+    "20ng":{
+        "instruct": "This is news document classification task.\n\n### Input:\n{sentence}\n\n### Output:\n", 
+        "normal": "### Input:\n{sentence}\n\n### Output:\n",
+        "none": "{sentence}",
+        "instruct_response_split": "### Output:\n", 
+        "normal_response_split": "### Output:\n"
+    },
+    "trec":{
+        "instruct": "Below is a question classification task. Given a question, output its category name.\n\n### Question:\n{question}\n\n### Category:\n", 
+        "normal": "### Input:\n{question}\n\n### Output:\n",
+        "none": "{question}",
+        "instruct_response_split": "### Category:\n", 
+        "normal_response_split": "### Output:\n"
+    },
+    "imdb":{
+        "instruct": "Below is a binary sentiment classification task. Given a movie review, output its sentiment type.\n\n### Review:\n{review}\n\n### Sentiment:\n", 
+        "normal": "### Input:\n{review}\n\n### Output:\n",
+        "none": "{review}",
+        "instruct_response_split": "### Sentiment:\n", 
+        "normal_response_split": "### Output:\n"
+    },
+    "wmt16":{
+        "instruct": "Below is a machine translation task. Translate an English sentence into German.\n\n### English:\n{english}\n\n### German:\n", 
+        "normal": "### Input:\n{english}\n\n### Output:\n",
+        "none": "{english}",
+        "instruct_response_split": "### German:\n", 
+        "normal_response_split": "### Output:\n"
+    },
+    "multi30k":{
+        "instruct": "Below is an English caption.\n\n### Caption:\n{line}", 
+        "normal": "### Input:\n{line}",
+        "none": "{line}"
+    },
+    "bank":{
+        "instruct": "Below is a bank dialogue system. Given an utterance, output its intent category.\n\n### Utterance:\n{sentence}\n\n### Intent:\n",  
+        "normal": "### Input:\n{sentence}\n\n### Output:\n",
+        "none": "{sentence}",
+        "instruct_response_split": "### Intent:\n", 
+        "normal_response_split": "### Output:\n"
+    },
+    "clinc150":{
+        "instruct_banking": "Below is a bank system. Given an input, output its intent category.\n\n### Input:\n{sentence}\n\n### Output:\n", 
+        "instruct_travel": "Given an input related to travel, output its intent category.\n\n### Input:\n{sentence}\n\n### Output:\n", 
+        "normal": "### Input:\n{sentence}\n\n### Output:\n",
+        "none": "{sentence}",
+        "instruct_response_split": "### Output:\n",
+        "normal_response_split": "### Output:\n"
+    }
+
+
+}

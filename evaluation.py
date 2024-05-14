@@ -16,11 +16,10 @@ def merge_keys(l, keys):
     return new_dict
 
 
-def evaluate_ood(args, model, tokenizer, features, ood, tag):
+def evaluate_ood(args, model, tokenizer, features, ood, tag, keys=None):
 
-    keys = ['maha', 'cosine', 'softmax', 'energy']
-    # keys = ['energy','softmax']
-        # keys = ['maha']
+    if keys is None:
+        keys = ['cosine', 'maha', 'energy','softmax']
 
     dataloader = DataLoader(features, batch_size=args.val_batch_size, collate_fn=DataCollatorForSeq2Cls(tokenizer))
     in_scores = []
@@ -31,6 +30,7 @@ def evaluate_ood(args, model, tokenizer, features, ood, tag):
             ood_keys = model.compute_ood(**batch)
             in_scores.append(ood_keys)
     in_scores = merge_keys(in_scores, keys)
+    
 
     dataloader = DataLoader(ood, batch_size=args.val_batch_size, collate_fn=DataCollatorForSeq2Cls(tokenizer))
     out_scores = []
@@ -41,11 +41,6 @@ def evaluate_ood(args, model, tokenizer, features, ood, tag):
             ood_keys = model.compute_ood(**batch)
             out_scores.append(ood_keys)
     out_scores = merge_keys(out_scores, keys)
-
-    print('plot density ing....')
-    # for key in keys:
-    #     plot_density(in_scores[key], out_scores[key], args.epoch_dir, ['darkorange','deepskyblue'],tag=f'{tag}_{key}')
-    # print('finish!')
 
     outputs = {}
     for key in keys:

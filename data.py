@@ -6,6 +6,7 @@ import csv
 import sys
 import os
 import json
+from typing import Dict
 
 datasets.logging.set_verbosity(datasets.logging.ERROR)
 
@@ -56,13 +57,10 @@ task_to_label_dict = {
 }
 
 
-# clinc150_bank_para = {'bill_due': 'due_bill', 'transfer':'money_transfer'}
-
 templates = json.load(open("./template.json",'r'))
 task_template = templates['20ng']
 
 def load(args, task_name, tokenizer, shot=1000000000, max_seq_length=512, is_id=False, input_format = 'instruct', generative=True):
-    sentence1_key, sentence2_key = task_to_keys[task_name]
     global task_template
     task_template = templates[args.task_name]
     
@@ -83,14 +81,8 @@ def load(args, task_name, tokenizer, shot=1000000000, max_seq_length=512, is_id=
         datasets = load_multi30k(generative = generative, input_format = input_format)
     elif task_name == 'clinc150':
         datasets = load_clinc(args, is_id=True, shot=shot, input_format = input_format, generative = generative)
-    elif task_name == 'clinc150_full':
-        datasets = load_clinc_full(args, is_id=True, shot=shot, input_format = input_format, generative = False)
     elif task_name == 'clinc150_ood':
         datasets = load_clinc(args, is_id=False, shot='full', input_format = input_format, generative = generative)
-    elif task_name == 'bank':
-        datasets = load_uood(is_id=True, seed=args.seed, known_cls_ratio = args.ratio, shot=shot, input_format = input_format)
-    elif task_name == 'bank_ood':
-        datasets = load_uood(is_id=False, seed=args.seed, known_cls_ratio = args.ratio, shot=shot, input_format = input_format)
         
         
     def tokenize(prmopt, add_eos_token=True):
@@ -112,34 +104,20 @@ def load(args, task_name, tokenizer, shot=1000000000, max_seq_length=512, is_id=
         ):
             result["input_ids"].append(tokenizer.eos_token_id)
             result["attention_mask"].append(1)
-
         result["labels"] = result["input_ids"].copy()
-
         return result  
     
     
     def preprocess_function_dis(examples, add_eos_token=True):
-        # inputs = examples[sentence1_key] if sentence2_key is None else examples[sentence1_key] + " " + examples[sentence2_key]
-        
-        # # sentence = examples['sentence']
-        # # inputs = sentence
-        # result = tokenize(inputs)  
-        # result["labels"] = examples["label"] if 'label' in examples else 0
-        
-        # return result
         sentence = examples['sentence']
         inputs = sentence
-        result = tokenize(inputs)  
-        result['labels'] = examples['label'] 
+        result = tokenize(inputs, add_eos_token=True) 
+        result['labels'] = examples['label']
         return result
         
 
     def preprocess_function_gen_train(examples, predicts_label_only=True):
         
-        # inputs = (
-        #     (examples[sentence1_key],) if sentence2_key is None else (
-        #         examples[sentence1_key] + " " + examples[sentence2_key],)
-        # )
         sentence = examples['sentence']
         label = examples['label'] 
         inputs = f'{sentence}{label}'
@@ -152,7 +130,7 @@ def load(args, task_name, tokenizer, shot=1000000000, max_seq_length=512, is_id=
                     -100
                 ] * input_prompt_len + result["labels"][
                     input_prompt_len:
-                ]  # could be sped up, probably    
+                ]  
         return result
     
     def preprocess_function_gen_val_test(examples, predicts_label_only=True):
@@ -168,14 +146,15 @@ def load(args, task_name, tokenizer, shot=1000000000, max_seq_length=512, is_id=
         dev_dataset = list(map(preprocess_function_gen_val_test, datasets['validation'])) if 'validation' in datasets and is_id else None
         test_dataset = list(map(preprocess_function_gen_val_test, datasets['test'])) if 'test' in datasets else None
     else:
+        # for discriminative network
         train_dataset = list(map(preprocess_function_dis, datasets['train'])) if 'train' in datasets and is_id else None
         dev_dataset = list(map(preprocess_function_dis, datasets['validation'])) if 'validation' in datasets and is_id else None
         test_dataset = list(map(preprocess_function_dis, datasets['test'])) if 'test' in datasets else None
-        
+
     return train_dataset, dev_dataset, test_dataset
 
 
-def load_glue(task, input_format='instruct',  generative=True,):
+def load_glue(task, input_format='instruct',  generative=True):
     pre_datasets = load_dataset("glue", task)
     ### MNIL
     if task == 'mnli':
@@ -195,7 +174,6 @@ def load_glue(task, input_format='instruct',  generative=True,):
         train_dataset = pre_datasets['train']
         dev_dataset = [d for d in pre_datasets['validation_matched']] + [d for d in pre_datasets['validation_mismatched']]
         test_dataset = [d for d in pre_datasets['test_matched']] + [d for d in pre_datasets['test_mismatched']]
-        # datasets['test'] = test_dataset
 
         train_dataset = list(map(template_mnli, train_dataset)) 
         train_flag = False
@@ -231,73 +209,10 @@ def load_glue(task, input_format='instruct',  generative=True,):
 
     return datasets
 
-
-def load_clinc_full(args, is_id, shot=100, known_cls_ratio = 0.5, input_format = 'normal', generative = False, data_dir="./data/clinc_full"):
-    # domain 
-    # domain = args.domain
-    # domain_map = json.load(open(os.path.join(data_dir, 'domains.json'),'r'))
-    # # label_list = list(map(lambda x: clinc150_bank_para.get(x,x),domain_map[domain])) 
-    # label_list = domain_map[domain]
-    if args.domain is not None:
-        domain_map = json.load(open(os.path.join(data_dir, 'domains.json'),'r'))
-    # label_list = list(map(lambda x: clinc150_bank_para.get(x,x),domain_map[domain])) 
-        all_label_list_pos = domain_map[args.domain]
-    else:  
-        all_label_list_pos = get_labels(data_dir)
-        
-    print(len(all_label_list_pos))
-    label_map = {}
-    inverse_label_map = {}
-    for i, label in enumerate(all_label_list_pos):
-        label_map[label] = i
-        inverse_label_map[i] = label
-        
-        
-    task_to_label_dict['clinc150'] = inverse_label_map
-
-    train_flag = True
-    print(task_template[input_format])
-    
-    
-    def template(item):
-        label = inverse_label_map[item['label']] if train_flag and generative else item['label']
-        intent = item['text'].strip()
-        input = task_template[input_format].format(sentence=intent)
-        return dict(sentence=input, label=label)
-
-    if is_id:
-        train_dataset = _create_examples(
-            _read_tsv(os.path.join(data_dir, "train.tsv")), label_map, all_label_list_pos)
-        dev_dataset = _create_examples(
-            _read_tsv(os.path.join(data_dir, "valid.tsv")), label_map, all_label_list_pos)
-        test_dataset = _create_examples(
-            _read_tsv(os.path.join(data_dir, "test.tsv")), label_map, all_label_list_pos)
-        
-        if shot != 'full':
-            train_dataset = select_few_shot(shot, train_dataset, "clinc150", args.seed)
-            dev_dataset = select_few_shot(shot, dev_dataset, "clinc150", args.seed)
-            print(f'few-shot setting : train {shot}, val {shot}')
-        
-        # template
-        train_dataset = list(map(template, train_dataset)) 
-        train_flag = False
-        dev_dataset = list(map(template, dev_dataset)) 
-        test_dataset = list(map(template, test_dataset)) 
-        datasets = {'train': train_dataset, 'validation': dev_dataset, 'test': test_dataset}
-    else:
-        
-        train_flag = False
-        test_dataset = [template(i) for i in _get_ood(
-            _read_tsv(os.path.join(data_dir, "test_para.tsv")), all_label_list_pos)]
-        datasets = {'test': test_dataset}
-        
-    return datasets
-
 def load_clinc(args, is_id, shot=100, known_cls_ratio = 0.5, input_format = 'normal', generative = True, data_dir="./data/clinc_full"):
     # domain 
     domain = args.domain
     domain_map = json.load(open(os.path.join(data_dir, 'domains_para.json'),'r'))
-    # label_list = list(map(lambda x: clinc150_bank_para.get(x,x),domain_map[domain])) 
     label_list = domain_map[domain]
     
     n_known_cls = round(len(label_list) * known_cls_ratio)
@@ -347,8 +262,9 @@ def load_clinc(args, is_id, shot=100, known_cls_ratio = 0.5, input_format = 'nor
         dev_dataset = list(map(template, dev_dataset)) 
         test_dataset = list(map(template, test_dataset)) 
         datasets = {'train': train_dataset, 'validation': dev_dataset, 'test': test_dataset}
-    else:
         
+    # OOD Samples
+    else:
         train_flag = False
         test_dataset = [template(i) for i in _get_ood(
             _read_tsv(os.path.join(data_dir, "test_para.tsv")), ood_labels)]
@@ -357,7 +273,7 @@ def load_clinc(args, is_id, shot=100, known_cls_ratio = 0.5, input_format = 'nor
     return datasets
 
 
-def load_uood(is_id, shot=100000000, data_dir="./data/banking", seed=42, known_cls_ratio=0.50, dataname='bank', input_format = 'instruct'):
+def load_uood(is_id, shot=100000000, data_dir="/media/sysu/Data/codes_kelvin/llm_ood/data/banking", seed=42, known_cls_ratio=0.50, dataname='bank', input_format = 'instruct', generative = True):
     all_label_list_pos = get_labels(data_dir)
     n_known_cls = round(len(all_label_list_pos) * known_cls_ratio)
     np.random.seed(seed)
@@ -370,20 +286,20 @@ def load_uood(is_id, shot=100000000, data_dir="./data/banking", seed=42, known_c
         label_map[label] = i
         inverse_label_map[i] = label
 
-    
+    print(inverse_label_map)
     task_to_label_dict['bank'] = inverse_label_map
     task_to_label_dict['bank_ood'] = ood_labels
     train_flag = True
     task_template = templates['bank']
 
     def template(item):
-        label = inverse_label_map[item['label']] if train_flag else item['label']
+        label = inverse_label_map[item['label']] if train_flag and generative else item['label']
         utterance = item['text']
-        input = task_template[input_format].format(utterance=utterance)
+        # input = f'Below is a natural nanguage inference task. Given a premise and a hypothesis, output the relationship between these two sentences.\n\n### Premise:\n{premise}\n\n### Hypothesis:\n{hypothesis}\n\n### Relationship:\n'
+        input = task_template[input_format].format(sentence=utterance)
         return dict(sentence=input, label=label)
     
     if is_id:
-        
         train_dataset = _create_examples(
             _read_tsv(os.path.join(data_dir, "train.tsv")), label_map, known_label_list)
         dev_dataset = _create_examples(
@@ -406,14 +322,13 @@ def load_uood(is_id, shot=100000000, data_dir="./data/banking", seed=42, known_c
         # dev_dataset = select_few_shot(shot, dev_dataset, dataname)
         datasets = {'train': train_dataset, 'validation': dev_dataset, 'test': test_dataset}
         
-        
     else:
         train_flag = False
         test_dataset =[template(i) for i in _get_ood(
             _read_tsv(os.path.join(data_dir, "test.tsv")), ood_labels) ]
         datasets = {'test': test_dataset}
+        
     return datasets
-
 
 
 def load_20ng(args, shot, is_id, generative=True, input_format='instruct'):
@@ -426,6 +341,7 @@ def load_20ng(args, shot, is_id, generative=True, input_format='instruct'):
         '18828_talk.religion.misc')
     label2name = task_to_label_dict['20ng']
     train_flag = True
+    # task_template = templates['20ng']
     print(task_template[input_format])
     def template(item):
         label = label2name[item['label']] if train_flag and generative else item['label']
@@ -433,13 +349,7 @@ def load_20ng(args, shot, is_id, generative=True, input_format='instruct'):
         input = task_template[input_format].format(sentence=sentence)
         return dict(sentence=input, label=label)
     
-    if 'opt' in args.model_name_or_path:
-        print('opt dataset...')
-        datasets = json.load(open('./data/20ng/opt_dataset.json','r'))
-        
-    elif 'llama' in args.model_name_or_path:
-        print('llama dataset...')
-        datasets = json.load(open('./data/20ng/dataset.json', 'r'))
+    datasets = json.load(open('./data/20ng/dataset.json', 'r'))
         
     
     train_dataset = []
@@ -466,15 +376,6 @@ def load_20ng(args, shot, is_id, generative=True, input_format='instruct'):
     dev_dataset = list(map(template, dev_dataset)) 
     test_dataset = list(map(template, test_dataset)) 
     
-    
-    # train_dataset += [template(j['text'], j['label']) for j in train_dataset]
-    # dev_dataset += [template(j['text'], j['label']) for j in dev_dataset]
-    # test_dataset += [template(j['text'], j['label']) for j in test_dataset]
-    
-
-    # if is_id:
-    #     train_dataset = select_few_shot(shot, train_dataset, "20ng")
-    #     dev_dataset = select_few_shot(shot, dev_dataset, "20ng")
     datasets = {'train': train_dataset, 'validation': dev_dataset, 'test': test_dataset}
     return datasets
 
@@ -502,29 +403,16 @@ def load_trec(shot, is_id, generative=True, input_format = "instruct"):
 
     train_dataset_new = [template(train_dataset[i]) for i in
                     idxs[:-num_reserve]]
-    
     train_flag = False
-    
     dev_dataset_new = [template(train_dataset[i]) for i in
                 idxs[-num_reserve:]]
-
     test_dataset = [template(d) for d in test_dataset]
-    # else:
-    #     dev_dataset_new = [{'text': train_dataset[i]['text'], 'label': train_dataset[i]['coarse_label']} for i in
-    #                 idxs[-num_reserve:]]
-    #     train_dataset_new = [{'text': train_dataset[i]['text'], 'label': train_dataset[i]['coarse_label']} for i in
-    #                     idxs[:-num_reserve]]
-    #     test_dataset = [{'text': d['text'], 'label': d['coarse_label']} for d in test_dataset]
-    # if is_id:
-    #     train_dataset = select_few_shot(shot, train_dataset, "trec")
-    #     dev_dataset = select_few_shot(shot, dev_dataset, "trec")
+    
     datasets = {'train': train_dataset_new, 'validation': dev_dataset_new, 'test': test_dataset}
     return datasets
 
 
 def load_imdb(shot, is_id, generative=True, input_format='instruct'):
-    # datasets = load_dataset('imdb')
-    # train_dataset_all = datasets['train']
     
     train_dataset_all = json.load(open('./data/imdb/train.json','r'))
     test_dataset_all = json.load(open('./data/imdb/test.json','r'))
@@ -537,12 +425,6 @@ def load_imdb(shot, is_id, generative=True, input_format='instruct'):
     def template(item):
         review = item['text'].strip()
         label = label2name[item['label']] if train_flag and generative else item['label']
-        
-        # pre = tokenizer(review, truncation=True,
-        #     max_length=512,
-        #     padding=False,
-        #     return_tensors=None)['input_ids']
-        # after = tokenizer.decode(pre, skip_special_tokens=True)
         input = task_template[input_format].format(sentence=review)
         return dict(sentence=input, label=label)
     
@@ -558,20 +440,12 @@ def load_imdb(shot, is_id, generative=True, input_format='instruct'):
     train_flag = False
     dev_dataset = [template(train_dataset_all[i]) for i in idxs[-num_reserve:]]
     test_dataset =  [template(d) for d in test_dataset_all]
-    # else:
-    #     train_dataset = [train_dataset_all[i] for i in idxs[:-num_reserve]]
-    #     dev_dataset = [train_dataset_all[i] for i in idxs[-num_reserve:]]
-    #     test_dataset =  test_dataset_all
-    # if is_id:
-    #     train_dataset = select_few_shot(shot, train_dataset, "imdb")
-    #     dev_dataset = select_few_shot(shot, dev_dataset, "imdb")
     datasets = {'train': train_dataset, 'validation': dev_dataset, 'test': test_dataset}
     return datasets
 
 
 def load_wmt16(generative=True,input_format='instruct'):
     datasets = load_dataset('wmt16', 'de-en')
-    # task_template = templates['wmt16']
     print(task_template[input_format])
     def template(item):
         english = item['en'].strip()
@@ -588,9 +462,9 @@ def load_wmt16(generative=True,input_format='instruct'):
 
 def load_multi30k(generative=True, input_format='instruct'):
     test_dataset = []
-    # task_template = templates['multi30k']
     print(task_template[input_format])
     def template(line):
+        # input = f'Below is an English caption.\n\n### Caption:\n{line}'
         input = task_template[input_format].format(sentence=line)
         return dict(sentence=input, label=0)
     
@@ -627,6 +501,7 @@ def load_sst2(args, shot, is_id, generative=True, input_format = "instruct"):
         label = label2name[item['label']] if train_flag and generative else item['label']
         sentence = item['sentence'].strip()
         input = task_template[input_format].format(sentence=sentence)
+        # input = f'Below is a sentiment analysis task. Given an input, output its sentiment type.\n\n### Input:\n{sentence}\n\n### Sentiment:\n'
         return dict(sentence=input, label=label)
     
     datasets = load_dataset('glue', 'sst2')
@@ -644,17 +519,13 @@ def load_sst2(args, shot, is_id, generative=True, input_format = "instruct"):
     train_flag = False
     dev_dataset = list(map(template, dev_dataset)) 
     test_dataset = list(map(template, test_dataset)) 
-    # if is_id:
-    #     train_dataset = select_few_shot(shot, train_dataset, "sst2")
-    #     dev_dataset = select_few_shot(shot, dev_dataset, "sst2")
+
     datasets = {'train': train_dataset, 'validation': dev_dataset, 'test': test_dataset}
     return datasets
 
 
-# train_dataset = [{'text': train_dataset[i]['text'], 'label': train_dataset[i]['label-coarse']} for i in
-#                      idxs[:-num_reserve]]
+
 def select_few_shot(shot, trainset, task_name, seed = 42):
-    # examples = []
     shot = float(shot)
     few_examples = []
     sentence1_key, sentence2_key = task_to_keys[task_name]
@@ -734,4 +605,5 @@ def get_labels(data_dir):
     labels = np.unique(np.array(test['label']))
 
     return labels
+
     

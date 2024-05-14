@@ -1,8 +1,10 @@
 import os
-os.environ['HF_DATASETS_OFFLINE'] = '1'
+# os.environ['HF_DATASETS_OFFLINE'] = '1'
 from typing import Any, Callable, Dict, List, NewType, Optional, Tuple, Union
 import argparse
 import torch
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
 from tqdm import tqdm
 import numpy as np
 from torch.utils.data import DataLoader
@@ -14,22 +16,14 @@ from llama_modeling import LlamaForCausalLM
 from evaluation import evaluate_ood
 import warnings
 from data import load, templates, task_to_label_dict
-from sklearn.metrics import f1_score
 import json
-
 import pandas as pd
-from accelerate import init_empty_weights, load_checkpoint_and_dispatch
-import torch.nn as nn
 import mlflow.pytorch
-
 import umap
 import umap.plot
 import matplotlib.pyplot as plt
 
-from accelerate import Accelerator
 
-torch.backends.cuda.matmul.allow_tf32 = True
-torch.backends.cudnn.allow_tf32 = True
 
 warnings.filterwarnings("ignore")
 
@@ -41,7 +35,6 @@ task_to_labels = {
     'clinc150': 150,
     "bank": round(77 * 0.5),
     'rostd': 3
-    # "clincMix": 150
 }
 
 task_to_metric = {
@@ -52,7 +45,6 @@ task_to_metric = {
     'clinc150': 'mnli',
     'bank': 'mnli',
     'rostd': 'mnli',
-    # 'clincMix': 'mnli',
 }
 
 
@@ -73,14 +65,12 @@ def train(args, model, tokenizer, train_dataset, dev_dataset, test_dataset, benc
         for tag, ood_features in benchmarks:
             print(f"**************star to evluate OOD dataset {tag}****************")
             results = evaluate_ood(args, model, tokenizer, test_dataset, ood_features, tag=tag)
-            # print("ood result", results)
             res = dict(res, **results)
             print(f"**************finishing evaluting OOD dataset {tag}*************")
-            # wandb.log(results, step=num_steps)
         return res
     
 
-    # Zero OOD
+    # Zero OODx
     if args.tunable_strategy == 'zero':
         epoch_dir = os.path.join(args.sub_exp_dir, f'epoch_zero')
         if not os.path.exists(epoch_dir):
@@ -93,10 +83,7 @@ def train(args, model, tokenizer, train_dataset, dev_dataset, test_dataset, benc
         return "Over for Zero-OOD Detection"
     
     
-    # no_decay = ["LayerNorm.weight", "bias"]
     optimizer = AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=args.learning_rate, eps=1e-8, weight_decay= args.weight_decay)
-    # accelerator = Accelerator(mixed_precision='fp16')
-    # model, optimizer, train_dataloader = accelerator.prepare(model, optimizer, train_dataloader)
     scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=warmup_steps,
                                                 num_training_steps=total_steps)
     
@@ -150,10 +137,7 @@ def train(args, model, tokenizer, train_dataset, dev_dataset, test_dataset, benc
                 batch = {key: value.to("cuda") for key, value in batch.items()}
                 outputs = model(**batch)
                 loss, logits = outputs[0], outputs[1]
-                # labels = batch["labels"]
-                # print(loss)
                 loss = loss / gradient_accumulation_steps
-                # accelerator.backward(loss)
                 loss.backward()
                 if step % gradient_accumulation_steps == 0:
                     optimizer.step()
@@ -165,14 +149,15 @@ def train(args, model, tokenizer, train_dataset, dev_dataset, test_dataset, benc
             
             
             print("train loss of epoch:", epoch, loss_avg.avg) 
+            
+            
             dev_acc = test(args, model, tokenizer, dev_dataset, tag="dev")
-                
             print("dev acc:", dev_acc)
             
             mlflow.log_metric("train_loss", loss_avg.avg, step=epoch)
             mlflow.log_metric("dev_acc", dev_acc, step=epoch)
             
-            tes_res = test(args, model, tokenizer, test_dataset, tag="test", print=True if epoch==5 else False)
+            tes_res = test(args, model, tokenizer, test_dataset, tag="test", print_=True if epoch==5 else False)
             print("test result:", tes_res)
             mlflow.log_metric("test_accuracy", tes_res, step=epoch)
 
@@ -199,12 +184,6 @@ def train(args, model, tokenizer, train_dataset, dev_dataset, test_dataset, benc
             
             
             if dev_acc >= best_eval:
-                
-                # for OOD detection
-
-            
-                # save_tunable_parameters(model, epoch_dir, args.tunable_strategy =='lora')
-                
                 best_eval = dev_acc
                 patient = 0
 
@@ -213,13 +192,6 @@ def train(args, model, tokenizer, train_dataset, dev_dataset, test_dataset, benc
             
             if patient>6 and epoch>15:
                 break
-                
-            # result_pic.append(final_res)
-        # save_results(args, final_res)    
-                
-
-    # save results for picture
-    # np.save('./results.npy',result_pic)
     
 @torch.no_grad()
 def plot(args, model, tokenizer, id_dataset, ood_datasets, path, metric='cosine', min_dist=0.1, n_neighbors=10, densmap=True):
@@ -236,8 +208,7 @@ def plot(args, model, tokenizer, id_dataset, ood_datasets, path, metric='cosine'
     else:
         id_name = 'ID: CLINC150'
     
-    
-    # id_name = 'ID: SST-2' if args.task_name == 'sst2' else 'ID: Bank'
+
     dataloader = DataLoader(id_dataset, batch_size=16, collate_fn=DataCollatorForSeq2Cls(tokenizer))
     in_sentences = []
     in_labels = np.array([id_name]*len(id_dataset))
@@ -333,31 +304,29 @@ def evaluate(args, model, tokenizer, eval_dataset, tag="train"):
 
 
 # Generative test
-def test(args, model, tokenizer, eval_dataset, tag="train", print=False):
+@torch.no_grad()
+def test(args, model, tokenizer, eval_dataset, tag="train", print_=False):
 
-    task_split = templates[args.task_name][f'{args.input_format}_response_split']
+    if 'instruct' in args.input_format:
+        input_format = 'instruct'
+    else:
+        input_format = args.input_format
+        
+    task_split = templates[args.task_name][f'{input_format}_response_split']
     task_label = task_to_label_dict[args.task_name] #label dict
     dataloader = DataLoader(eval_dataset, batch_size=args.val_batch_size, collate_fn=DataCollatorForSeq2Cls(tokenizer=tokenizer))
 
     label_list = []
     generated_answer = []
-    
-    generation_config = GenerationConfig(
-        temperature=0.1,
-        top_p=0.85,
-        top_k=50,
-        num_beams=1,
-    )
 
     for step, batch in enumerate(tqdm(dataloader)):
         model.eval()
-        # labels = batch["labels"].detach().cpu().numpy()
-        # batch = {key: value.to("cuda") for key, value in batch.items()}
-        # batch["mode"] = tag
+        input_ids=batch['input_ids']
         # Greedy Search
         with torch.no_grad():
             generation_output = model.generate(
             input_ids=batch['input_ids'].to('cuda'),
+            attention_mask = batch['attention_mask'].to('cuda'),
             return_dict_in_generate=True,
             output_scores=False,
             max_new_tokens=16,
@@ -368,18 +337,16 @@ def test(args, model, tokenizer, eval_dataset, tag="train", print=False):
         answer = [i.split(task_split)[1].strip() for i in output]
         generated_answer += answer
         label_list += [task_label[i.item()] for i in batch['labels']]
-        # change # only label
-        # label_list += [str(i.item()) for i in batch['labels']]
+
         
     assert len(label_list) == len(generated_answer)
     acc = sum(np.array(label_list) == np.array(generated_answer)) / len(label_list)
     
-    if print:
+    if print_:
         task_dir = args.sub_exp_dir
         with open(f'{task_dir}/predict.json','w') as file:
             results_ = {'truth':label_list, 'predict':generated_answer}
-            json.dump(results_, file)   
-        
+            json.dump(results_, file)
             
     return acc
 
@@ -449,14 +416,12 @@ def main():
     parser.add_argument("--weight_decay", default=0.01, type=float)
     parser.add_argument("--num_train_epochs", default=20, type=float)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--avg_position", type=int, default=14)
     parser.add_argument("--accumulation_step", type=int, default=1)
     parser.add_argument("--ratio", type=float)
     parser.add_argument("--shot", default=1)
     parser.add_argument("--tunable_strategy", type=str, default='lora')
     parser.add_argument("--save_results_path", type=str, help="the path to save results")
-    parser.add_argument("--pooling_way", type=str, default='final_token',
-                        help="the path to save results")
+    parser.add_argument("--pooling_way", type=str, default='final_token')
 
     args = parser.parse_args()
     set_seed(5)
@@ -487,51 +452,24 @@ def main():
         config.use_cache = False
         config.sentence_emb = args.sentence_emb
         config.task = args.task_name
-        config.avg_position = args.avg_position
         tokenizer = LlamaTokenizer.from_pretrained(args.model_name_or_path)
         config.pad_token_id = 0
         tokenizer.pad_token_id = (
         0  # unk. we want this to be different from the eos token
         )
-        # tokenizer.padding_side = "right" 
         model = LlamaForCausalLM.from_pretrained(
             args.model_name_or_path, 
             config = config,
             torch_dtype = torch.float32,
             device_map = "auto"
         )
-        
-    
-        
-        
-    elif 'opt' in args.model_name_or_path:
-        from transformers import AutoTokenizer, OPTConfig
-        from opt_modeling import OPTForCausalLM
-        
-        config = OPTConfig.from_pretrained(args.model_name_or_path)
-        # config.gradient_checkpointing = True
-        config.output_hidden_states= False
-        config.use_cache = False
-        config.sentence_emb = args.sentence_emb
-        tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, use_fast=False)
-        
-        
-        model = OPTForCausalLM.from_pretrained(
-            args.model_name_or_path, 
-            config = config,
-            torch_dtype=torch.float32,
-            device_map = "auto"
-        )
-        # gradient checkpointing
-        # model.gradient_checkpointing_enable()
-    
     else:
         pass
         # TODO: customized for large encoder-decoder architecture like Flan-T5
         
         
     if args.tunable_strategy =='lora':
-        # TODO: Lora-tuning
+        # Lora-tuning
         from peft import (
             LoraConfig,
             get_peft_model,
@@ -546,10 +484,6 @@ def main():
         )
         model = get_peft_model(model, lora_config)
     
-    elif args.tunable_strategy =='head':
-        # only head tunable for generative classification task
-        model.model.requires_grad_(False) 
-    
     elif args.tunable_strategy =='zero':
         model.requires_grad_(False)
     
@@ -559,14 +493,10 @@ def main():
     for name, para in model.named_parameters():
         if para.requires_grad:
             print(f'\033[0;33m {name} is trainable in this version. Please check if the setting is right! \033[0m')
-            # raise ValueError(f"False allowable training parameters {name}, only {tunable_list} allowed")
-    
-    
     
     if args.task_name == '20ng':
         datasets = ['sst2', 'trec', 'mnli', 'rte', 'imdb', 'wmt16', 'multi30k', '20ng']
     elif args.task_name == 'sst2':
-        # datasets = ['sst2', '20ng']
         datasets = ['sst2', 'trec', 'mnli', 'rte', 'wmt16', 'multi30k', '20ng']
     elif args.task_name == 'bank':
         datasets = ['bank', 'bank_ood']
@@ -574,11 +504,7 @@ def main():
         datasets = ['clinc150', 'clinc150_ood']
     else:
         datasets = ['trec', 'imdb', 'wmt16', 'multi30k', 'rte', 'sst2', 'mnli', '20ng']
-    # datasets =  ['sst2']
-    # datasets = ['sst2', 'bank']
-    # datasets = ['rte', 'sst2']
-    # datasets = ['rte', 'sst2', 'mnli', '20ng', 'trec', 'imdb', 'wmt16', 'multi30k', 'clinc150']
-    # datasets = ['clinc150', 'bank', 'rostd']
+
     benchmarks = ()
     for dataset in datasets:
         if dataset == args.task_name:
@@ -586,14 +512,14 @@ def main():
                                                             is_id=True, input_format = args.input_format, generative=True )
             print(f"train size of {dataset} is {len(train_dataset)}, valid set is  {len(dev_dataset)}, test size is {len(test_dataset)}")
             
-            # compute first token location for each class after paraphrase
+            # compute prob for each class
             if args.task_name == 'clinc150':
                 label2dict = task_to_label_dict[args.task_name]
-                # print(label2dict)
+                print(label2dict)
                 label_template = ['### Output:\n'+i for i in label2dict.values()]
                 tokens = [tokenizer(i)['input_ids'][5] for i in label_template]
-                # print(tokens)
-                # print(tokenizer.convert_ids_to_tokens(tokens))
+                print(tokens)
+                print(tokenizer.convert_ids_to_tokens(tokens))
                 assert len(tokens) == len(set(tokens)), 'wrong label name paraphrase'
                 
                 if args.tunable_strategy =='lora':
@@ -605,22 +531,6 @@ def main():
             _, _, ood_dataset = load(args, dataset, tokenizer, max_seq_length=args.max_seq_length, input_format = args.input_format, generative=True)
             benchmarks = (('ood_' + dataset, ood_dataset),) + benchmarks
             print("ood size "+dataset, len(ood_dataset))
-    # for dataset in datasets:
-    #     if dataset == args.task_name:
-    #         train_dataset, dev_dataset, test_dataset = load(dataset, tokenizer, shot=args.shot,
-    #                                                         max_seq_length=args.max_seq_length, is_id=True)
-    #         # _, _, ood_dataset = load(dataset, tokenizer, max_seq_length=args.max_seq_length)
-    #         # benchmarks = ((dataset, ood_dataset),) + benchmarks
-    #         # print("train size " + dataset, len(train_dataset))
-    #         # print("dev size " + dataset, len(dev_dataset))
-    #         # print("test size " + dataset, len(test_dataset))
-    #     else:
-    #         _, _, ood_dataset = load(dataset, tokenizer, max_seq_length=args.max_seq_length)
-    #         benchmarks = (('ood_' + dataset, ood_dataset),) + benchmarks
-
-    #     if dataset == 'clinc150':
-    #         _, _, ood_dataset = load(dataset, tokenizer, max_seq_length=args.max_seq_length)
-    #         benchmarks = (('ood_' + dataset, ood_dataset),) + benchmarks
 
     mlflow.set_experiment(f"Tunable: {args.tunable_strategy}, ID: {args.task_name}, Shot: {args.shot}")
     

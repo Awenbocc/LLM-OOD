@@ -459,6 +459,11 @@ class LlamaModel(LlamaPreTrainedModel):
     
     
     def avg_pooling_hidden_states(self, attention_mask, hidden_states): 
+        
+        
+        # part_attention_mask = copy.deepcopy(attention_mask)
+        # part_attention_mask[:,-7:] = 0
+        # part_attention_mask[:,:4] = 0
         input_mask_expanded = attention_mask.unsqueeze(-1).expand(hidden_states.size()).float().to(hidden_states.device)
         sum_embeddings = torch.sum(hidden_states * input_mask_expanded, 1)
         sum_mask = input_mask_expanded.sum(1)
@@ -619,6 +624,11 @@ class LlamaModel(LlamaPreTrainedModel):
             attentions=all_self_attns,
         )
         
+    # customized function for OOD detection
+    @torch.no_grad()
+    def prepare_ood(self, dataloader=None):
+        pass
+        
     
 
 
@@ -681,7 +691,6 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
         sum_mask = input_mask_expanded.sum(1)
         sum_mask = torch.clamp(sum_mask, min = 1e-9)
         mean_embeddings = sum_embeddings/sum_mask
-        
         return mean_embeddings
 
     @add_start_docstrings_to_model_forward(LLAMA_INPUTS_DOCSTRING)
@@ -818,8 +827,6 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
                 self.bank = pooled
                 self.label_bank = labels
             else:
-                # bank = pooled.detach().clone()
-                # label_bank = labels.detach().clone()
                 self.bank = torch.cat([pooled, self.bank], dim=0)
                 self.label_bank = torch.cat([labels, self.label_bank], dim=0)
 
@@ -873,9 +880,8 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
         
         assert prob_choices is not None
         
-        # softmax score   #        ### Input:\n{sentence}\n\n### Output:\nPositive  Posi tive /  N eg tive
+        # softmax score   #        ### Input:\n{sentence}\n\n### Output:\nPositive
         softmax_score = F.softmax(logits, dim=-1)[:, prob_choices].max(-1)[0]
-
         maha_score = []
         for c in self.all_classes:
             centered_pooled = pooled - self.class_mean[c].unsqueeze(0)
@@ -1048,8 +1054,8 @@ class LlamaForSequenceClassification(LlamaPreTrainedModel):
         if self.config.sentence_emb == 'avg':
             pooled_hidden_states = self.avg_pooling_hidden_states(attention_mask, hidden_states)
         elif self.config.sentence_emb == 'last':
-            # pooled_hidden_states = self.eos_pooling_hidden_states(input_ids, hidden_states)
-            pooled_hidden_states = hidden_states[:,-1,:]
+            pooled_hidden_states = self.eos_pooling_hidden_states(input_ids, hidden_states)
+            # pooled_hidden_states = hidden_states[:,-1,:]
         
         logits = self.score(pooled_hidden_states.to(torch.float32))
 
@@ -1088,7 +1094,7 @@ class LlamaForSequenceClassification(LlamaPreTrainedModel):
             attentions=transformer_outputs.attentions,
         )
         
-     # customized function for OOD detection
+    # customized function for OOD detection
     @torch.no_grad()
     def prepare_ood(self, dataloader=None):
         self.bank = None
@@ -1108,8 +1114,8 @@ class LlamaForSequenceClassification(LlamaPreTrainedModel):
             if self.config.sentence_emb == 'avg':
                 pooled = self.avg_pooling_hidden_states(attention_mask, hidden_states)
             elif self.config.sentence_emb == 'last':
-                # pooled = self.eos_pooling_hidden_states(input_ids, hidden_states)
-                pooled = hidden_states[:,-8,:]
+                pooled = self.eos_pooling_hidden_states(input_ids, hidden_states)
+                # pooled = hidden_states[:,-8,:]
             
             if pooled.requires_grad or labels.requires_grad:
                 raise ValueError("cannot assign grad to prepare_ood function.")
@@ -1151,10 +1157,12 @@ class LlamaForSequenceClassification(LlamaPreTrainedModel):
         if self.config.sentence_emb == 'avg':
             pooled = self.avg_pooling_hidden_states(attention_mask, hidden_states)
         elif self.config.sentence_emb == 'last':
-            pooled = hidden_states[:,-8,:]
+            # pooled = hidden_states[:,-8,:]
+            pooled = self.eos_pooling_hidden_states(input_ids, hidden_states)
         
         
-        logits = self.score(hidden_states[:,-1,:])
+        # logits = self.score(hidden_states[:,-1,:])
+        logits = self.score(pooled)
         
         if logits.requires_grad or pooled.requires_grad:
             raise ValueError("cannot assign grad to prepare_ood function.")

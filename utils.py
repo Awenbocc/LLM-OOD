@@ -28,29 +28,6 @@ class DataCollatorForSeq2Cls:
             pad_to_multiple_of=self.pad_to_multiple_of,
             return_tensors='pt',
         )
-        # features['labels'] = labels
-        return features
-    
-
-@dataclass
-class DataCollatorForSeq2Match:
-    tokenizer: None
-    padding: bool= True
-    max_length: Optional[int] = None
-    pad_to_multiple_of: int = 8
-    def __call__(self, features):
-        self.tokenizer.padding_side = "right" 
-        input_ids, attention_mask, labels = tuple([instance[key] for instance in features]
-                                  for key in ("input_ids", "attention_mask", "labels"))
-
-        features = self.tokenizer.pad(
-            dict(input_ids=input_ids, attention_mask=attention_mask, labels=labels),
-            padding=self.padding,
-            max_length=self.max_length,
-            pad_to_multiple_of=self.pad_to_multiple_of,
-            return_tensors='pt',
-        )
-        # features['labels'] = labels
         return features
     
 
@@ -94,7 +71,7 @@ class DataCollatorForSeq2Seq:
             max_length=self.max_length,
             pad_to_multiple_of=self.pad_to_multiple_of,
             return_tensors='pt',
-        )     
+        )
         
         return features
 
